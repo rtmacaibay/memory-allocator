@@ -69,6 +69,8 @@ pthread_mutex_t g_alloc_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 /**
  * print_memory
+ * 
+ * TODO: make this not allocate memory
  *
  * Prints out the current memory state, including both the regions and blocks.
  * Entries are printed in order, so there is an implied link from the topmost
@@ -112,7 +114,54 @@ void *malloc(size_t size)
     // TODO: allocate memory. You'll first check if you can reuse an existing
     // block. If not, map a new memory region.
 
-    return NULL;
+    // go through list and see if there's some free blocks that fits
+    // we're trying to allocate
+
+    size_t real_sz = size + sizeof(struct mem_block);
+
+    int page_sz = getpagesize();
+
+    size_t num_pages = real_sz / page_sz;
+
+    if (real_sz % page_sz) {
+        num_pages++;
+    }
+
+    size_t region_sz = num_pages * page_sz;
+
+    struct mem_block * block = mmap(
+            NULL, /* Address (we use NULL to let the kernel decide) */
+            region_sz, /* Size of memory block to allocate */
+            PROT_READ | PROT_WRITE, /* Memory protection flags */
+            MAP_PRIVATE | MAP_ANONYMOUS, /* Type of mapping */
+            -1, /* file descriptor */
+            0 /* offset to start at within the file */);
+
+    if (block == MAP_FAILED) {
+        perror("map");
+        return NULL;
+    }
+
+    block->alloc_id = g_allocations++;
+    block->size = region_sz;
+    block->usage = real_sz;
+    block->region_start = block;
+    block->region_size = region_sz;
+    block->next = NULL;
+
+    if (g_head == NULL) {
+        g_head = block;
+    } else {
+        struct mem_block * curr = g_head;
+
+        while (curr->next != NULL) {
+            curr = curr->next;
+        }
+
+        curr->next = block;
+    }
+
+    return block + 1;
 }
 
 void free(void *ptr)
@@ -121,6 +170,9 @@ void free(void *ptr)
         /* Freeing a NULL pointer does nothing */
         return;
     }
+
+    struct mem_block * block = (struct mem_block *) ptr;
+
 
     // TODO: free memory. If the containing region is empty (i.e., there are no
     // more blocks in use), then it should be unmapped.
