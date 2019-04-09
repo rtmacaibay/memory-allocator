@@ -61,6 +61,7 @@ struct mem_block {
 
 /* Start (head) of our linked list: */
 struct mem_block *g_head = NULL;
+struct mem_block *g_tail = NULL;
 
 /* Allocation counter: */
 unsigned long g_allocations = 0;
@@ -70,7 +71,7 @@ pthread_mutex_t g_alloc_mutex = PTHREAD_MUTEX_INITIALIZER;
 /**
  * print_memory
  * 
- * TODO: make this not allocate memory
+ * TODO: make this not allocate memory //fprintf ??
  *
  * Prints out the current memory state, including both the regions and blocks.
  * Entries are printed in order, so there is an implied link from the topmost
@@ -113,22 +114,28 @@ void *malloc(size_t size)
 {
     // TODO: allocate memory. You'll first check if you can reuse an existing
     // block. If not, map a new memory region.
+    LOG("Allocation request; size = %zu\n", size);
 
     // go through list and see if there's some free blocks that fits
     // we're trying to allocate
 
+    /* How much space we are using in the region */
     size_t real_sz = size + sizeof(struct mem_block);
 
+    /* Size per page */
     int page_sz = getpagesize();
 
+    /* Number of pages we are using */
     size_t num_pages = real_sz / page_sz;
-
+    /* If there is a remainder, we need an extra page*/
     if (real_sz % page_sz) {
         num_pages++;
     }
 
+    /* Size of entire region */
     size_t region_sz = num_pages * page_sz;
 
+    /* Set up memory block */
     struct mem_block * block = mmap(
             NULL, /* Address (we use NULL to let the kernel decide) */
             region_sz, /* Size of memory block to allocate */
@@ -138,7 +145,7 @@ void *malloc(size_t size)
             0 /* offset to start at within the file */);
 
     if (block == MAP_FAILED) {
-        perror("map");
+        perror("mmap");
         return NULL;
     }
 
@@ -149,16 +156,14 @@ void *malloc(size_t size)
     block->region_size = region_sz;
     block->next = NULL;
 
+    /* Add to linked list */
     if (g_head == NULL) {
         g_head = block;
+        g_tail = block;
     } else {
-        struct mem_block * curr = g_head;
-
-        while (curr->next != NULL) {
-            curr = curr->next;
-        }
-
-        curr->next = block;
+        g_tail->next = block;
+        g_tail = g_tail->next;
+        g_tail->next = NULL;
     }
 
     return block + 1;
@@ -171,16 +176,31 @@ void free(void *ptr)
         return;
     }
 
-    struct mem_block * block = (struct mem_block *) ptr;
+    struct mem_block * blk = (struct mem_block *) blk - 1;
+    LOG("Free request; allocation = %lu\n", blk->alloc_id);
 
 
     // TODO: free memory. If the containing region is empty (i.e., there are no
     // more blocks in use), then it should be unmapped.
+
+    // 1. go to region start
+    // 2. traverse through LL
+    // 3. stop when you:
+    //  a. find something that is not free
+    //  b. when you find the start of a different region
+    // 4. if you (a) move on; if (b) then munmap
+
+    int ret = munmap(blk, blk->region_size);
+    if (ret == -1) {
+        perror("munmap");
+    }
 }
 
 void *calloc(size_t nmemb, size_t size)
 {
     // TODO: hmm, what does calloc do?
+    // malloc
+    // memset(ptr, 0, nmemb * size);
     return NULL;
 }
 
