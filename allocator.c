@@ -107,6 +107,16 @@ void *reuse(size_t size) {
 
     // TODO: using free space management algorithms, find a block of memory that
     // we can reuse. Return NULL if no suitable block is found.
+
+    struct mem_block * curr = g_head;
+
+    while (curr != NULL) {
+        // i will finish this later you fool
+        if (curr->size == curr->region_size && curr->usage < curr->size) {
+
+        }
+    }
+
     return NULL;
 }
 
@@ -114,6 +124,18 @@ void *malloc(size_t size)
 {
     // TODO: allocate memory. You'll first check if you can reuse an existing
     // block. If not, map a new memory region.
+
+    // void * ptr = reuse(size);
+    // if (ptr != NULL) {
+    //     // noice we could reuse space
+    //     return ptr;
+    // }
+
+    // re-align the size
+    if (size % 8 != 0) {
+        size = (((int) size / 8) * 8) + 8;
+    }
+
     LOG("Allocation request; size = %zu\n", size);
 
     // go through list and see if there's some free blocks that fits
@@ -121,6 +143,8 @@ void *malloc(size_t size)
 
     /* How much space we are using in the region */
     size_t real_sz = size + sizeof(struct mem_block);
+
+    LOG("Allocation request; real size = %zu\n", real_sz);
 
     /* Size per page */
     int page_sz = getpagesize();
@@ -176,9 +200,10 @@ void free(void *ptr)
         return;
     }
 
-    struct mem_block * blk = (struct mem_block *) blk - 1;
+    struct mem_block * blk = (struct mem_block *) ptr - 1;
     LOG("Free request; allocation = %lu\n", blk->alloc_id);
 
+    blk->usage = 0;
 
     // TODO: free memory. If the containing region is empty (i.e., there are no
     // more blocks in use), then it should be unmapped.
