@@ -131,7 +131,7 @@ void *malloc(size_t size)
     //     return ptr;
     // }
 
-    // re-align the size
+    /* Re-align the size */
     if (size % 8 != 0) {
         size = (((int) size / 8) * 8) + 8;
     }
@@ -208,12 +208,24 @@ void free(void *ptr)
     // TODO: free memory. If the containing region is empty (i.e., there are no
     // more blocks in use), then it should be unmapped.
 
+    // TODO: algorithm for figuring out if we can free a region:
     // 1. go to region start
     // 2. traverse through LL
     // 3. stop when you:
     //  a. find something that is not free
     //  b. when you find the start of a different region
     // 4. if you (a) move on; if (b) then munmap
+
+    /* Update the linked list */                                                            
+    if (blk == g_head) {                                        
+        g_head = blk->next;                                     
+    } else {                                                    
+        struct mem_block *prev = g_head;                        
+        while (prev->next != blk) {                             
+            prev = prev->next;                                  
+        }                                                       
+        prev->next = blk->next;                                 
+    }   
 
     int ret = munmap(blk, blk->region_size);
     if (ret == -1) {
@@ -231,6 +243,11 @@ void *calloc(size_t nmemb, size_t size)
 
 void *realloc(void *ptr, size_t size)
 {
+	/* Re-align the size */
+    if (size % 8 != 0) {
+        size = (((int) size / 8) * 8) + 8;
+    }
+
     if (ptr == NULL) {
         /* If the pointer is NULL, then we simply malloc a new block */
         return malloc(size);
