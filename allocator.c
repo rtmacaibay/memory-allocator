@@ -103,18 +103,43 @@ void print_memory(void)
 }
 
 void *reuse(size_t size) {
-    assert(g_head != NULL);
+    if (g_head == NULL) {
+    	return NULL;
+    }
 
     // TODO: using free space management algorithms, find a block of memory that
     // we can reuse. Return NULL if no suitable block is found.
 
     struct mem_block * curr = g_head;
+    size_t real_sz = size + sizeof(struct mem_block);
 
     while (curr != NULL) {
         // i will finish this later you fool
         if (curr->size == curr->region_size && curr->usage < curr->size) {
+        	if (real_sz <= curr->size - curr->usage) {
+        		struct mem_block * freeloader = (void*)curr + curr->usage;
+        		freeloader->alloc_id = g_allocations++;
+        		freeloader->size = curr->size - curr->usage;
+        		freeloader->usage = real_sz;
+        		freeloader->region_start = curr->region_start;
+        		freeloader->region_size = curr->region_size;
+        		if (g_tail == curr) {
+        			freeloader->next = NULL;
+        			g_tail->next = freeloader;
+        			g_tail = freeloader;
+        		} else {
+        			freeloader->next = curr->next;
+        			curr->next = freeloader;
+        		}
+        		curr->size = curr->usage;
 
+        		LOG("Allocation request USING reuse; size = %zu\n", size);
+
+        		return freeloader;
+        	}
         }
+
+        curr = curr->next;
     }
 
     return NULL;
@@ -125,15 +150,18 @@ void *malloc(size_t size)
     // TODO: allocate memory. You'll first check if you can reuse an existing
     // block. If not, map a new memory region.
 
-    // void * ptr = reuse(size);
-    // if (ptr != NULL) {
-    //     // noice we could reuse space
-    //     return ptr;
-    // }
-
-    /* Re-align the size */
+	/* Re-align the size */
     if (size % 8 != 0) {
         size = (((int) size / 8) * 8) + 8;
+    }
+
+    void * ptr = reuse(size);
+    if (ptr == NULL) {
+    	LOGP("Reuse returned NULL\n");
+    }
+    if (ptr != NULL) {
+        // noice we could reuse space
+        return ptr;
     }
 
     LOG("Allocation request; size = %zu\n", size);
@@ -215,6 +243,23 @@ void free(void *ptr)
     //  a. find something that is not free
     //  b. when you find the start of a different region
     // 4. if you (a) move on; if (b) then munmap
+
+    struct mem_block * orig_start = blk->region_start;
+    struct mem_block * prev = g_head;
+
+    while (prev->next != NULL) {
+    	struct mem_block * curr = prev->next;
+    	if (curr->region_start == orig_start) {
+    		if (curr->usage != 0) {
+    			return;
+    		}
+    	} else {
+    		break;
+    	}
+    	prev = prev->next;
+    }
+
+    /* I WILL FINSIH THIS ELIJAH */
 
     /* Update the linked list */                                                            
     if (blk == g_head) {                                        
