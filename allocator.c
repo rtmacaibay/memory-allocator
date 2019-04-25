@@ -16,6 +16,7 @@
 
 #include <stdio.h>
 #include <stdint.h>
+#include <stdlib.h>
 #include <sys/mman.h>
 #include <string.h>
 #include <unistd.h>
@@ -102,6 +103,27 @@ void print_memory(void)
     }
 }
 
+void *reuse_space(struct mem_block * ptr, size_t real_sz) {
+    struct mem_block * freeloader = (void*)ptr + ptr->usage;
+    freeloader->alloc_id = g_allocations++;
+    freeloader->size = ptr->size - ptr->usage;
+    freeloader->usage = real_sz;
+    freeloader->region_start = ptr->region_start;
+    freeloader->region_size = ptr->region_size;
+    if (g_tail == ptr) {
+        freeloader->next = NULL;
+        g_tail->next = freeloader;
+        g_tail = freeloader;
+    } else {
+        freeloader->next = ptr->next;
+        ptr->next = freeloader;
+    }
+
+    ptr->size = ptr->usage;
+
+    return freeloader + 1;
+}
+
 void *reuse(size_t size) {
     if (g_head == NULL) {
         return NULL;
@@ -111,39 +133,34 @@ void *reuse(size_t size) {
     // TODO: using free space management algorithms, find a block of memory that
     // we can reuse. Return NULL if no suitable block is found.
 
+    char * algo = getenv("ALLOCATOR_ALGORITHM");
+    if (algo == NULL) {
+        algo = "first_fit";
+    }
+
+    size_t fits_best = SIZE_MAX;
+    size_t fits_worst = 0;
+
     struct mem_block * curr = g_head;
     size_t real_sz = size + sizeof(struct mem_block);
 
     while (curr != NULL) {
-        // i will finish this later you fool
-        if (curr->usage == 0 && real_sz <= curr->size) {
-            curr->usage = real_sz;
-            //memset(curr + 1, 0, real_sz);
-            LOG("Allocation request USING reuse; reusing alloc %ld\n", curr->alloc_id);
-            return curr+1;
-        }
-        if (curr->usage < curr->size) {
-            if (real_sz <= curr->size - curr->usage) {
-                struct mem_block * freeloader = (void*)curr + curr->usage;
-                freeloader->alloc_id = g_allocations++;
-                freeloader->size = curr->size - curr->usage;
-                freeloader->usage = real_sz;
-                freeloader->region_start = curr->region_start;
-                freeloader->region_size = curr->region_size;
-                if (g_tail == curr) {
-                    freeloader->next = NULL;
-                    g_tail->next = freeloader;
-                    g_tail = freeloader;
-                } else {
-                    freeloader->next = curr->next;
-                    curr->next = freeloader;
-                }
-                curr->size = curr->usage;
-
-                LOG("Allocation request USING reuse; size = %zu, alloc = %ld\n", real_sz, g_allocations - 1);
-
-                return freeloader+1;
+        if (strcmp(algo, "first_fit") == 0) {
+            // this is done
+            if (curr->usage == 0 && real_sz <= curr->size) {
+                curr->usage = real_sz;
+                LOG("Allocation request USING reuse; reusing alloc %ld\n", curr->alloc_id);
+                return curr + 1;
             }
+            if (curr->usage < curr->size && real_sz <= curr->size - curr->usage) {
+                LOG("Allocation request USING reuse; size = %zu, alloc = %ld\n", real_sz, g_allocations);
+
+                return reuse_space(curr, real_sz);
+            }
+        } else if (strcmp(algo, "best_fit") == 0) {
+
+        } else if (strcmp(algo, "worst_fit") == 0) {
+
         }
 
         curr = curr->next;
@@ -249,17 +266,6 @@ void free(void *ptr)
     LOG("Free request; size = %zu, alloc = %lu\n", blk->usage, blk->alloc_id);
     
     blk->usage = 0;
-
-    // TODO: free memory. If the containing region is empty (i.e., there are no
-    // more blocks in use), then it should be unmapped.
-
-    // TODO: algorithm for figuring out if we can free a region:
-    // 1. go to region start
-    // 2. traverse through LL
-    // 3. stop when you:
-    //  a. find something that is not free
-    //  b. when you find the start of a different region
-    // 4. if you (a) move on; if (b) then munmap
 
     struct mem_block * orig_start = blk->region_start;
     struct mem_block * prev = g_head;
