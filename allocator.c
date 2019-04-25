@@ -79,18 +79,18 @@ pthread_mutex_t g_alloc_mutex = PTHREAD_MUTEX_INITIALIZER;
  */
 void print_memory(void)
 {
-    puts("-- Current Memory State --");
+    LOGP("-- Current Memory State --\n");
     struct mem_block *current_block = g_head;
     struct mem_block *current_region = NULL;
     while (current_block != NULL) {
         if (current_block->region_start != current_region) {
             current_region = current_block->region_start;
-            printf("[REGION] %p-%p %zu\n",
+            LOG("[REGION] %p-%p %zu\n",
                     current_region,
                     (void *) current_region + current_region->region_size,
                     current_region->region_size);
         }
-        printf("[BLOCK]  %p-%p (%ld) %zu %zu %zu\n",
+        LOG("[BLOCK]  %p-%p (%ld) %zu %zu %zu\n",
                 current_block,
                 (void *) current_block + current_block->size,
                 current_block->alloc_id,
@@ -104,8 +104,9 @@ void print_memory(void)
 
 void *reuse(size_t size) {
     if (g_head == NULL) {
-    	return NULL;
+        return NULL;
     }
+    //print_memory();
 
     // TODO: using free space management algorithms, find a block of memory that
     // we can reuse. Return NULL if no suitable block is found.
@@ -115,28 +116,34 @@ void *reuse(size_t size) {
 
     while (curr != NULL) {
         // i will finish this later you fool
-        if (curr->size == curr->region_size && curr->usage < curr->size) {
-        	if (real_sz <= curr->size - curr->usage) {
-        		struct mem_block * freeloader = (void*)curr + curr->usage;
-        		freeloader->alloc_id = g_allocations++;
-        		freeloader->size = curr->size - curr->usage;
-        		freeloader->usage = real_sz;
-        		freeloader->region_start = curr->region_start;
-        		freeloader->region_size = curr->region_size;
-        		if (g_tail == curr) {
-        			freeloader->next = NULL;
-        			g_tail->next = freeloader;
-        			g_tail = freeloader;
-        		} else {
-        			freeloader->next = curr->next;
-        			curr->next = freeloader;
-        		}
-        		curr->size = curr->usage;
+        if (curr->usage == 0 && real_sz <= curr->size) {
+            curr->usage = real_sz;
+            //memset(curr + 1, 0, real_sz);
+            LOG("Allocation request USING reuse; reusing alloc %ld\n", curr->alloc_id);
+            return curr+1;
+        }
+        if (curr->usage < curr->size) {
+            if (real_sz <= curr->size - curr->usage) {
+                struct mem_block * freeloader = (void*)curr + curr->usage;
+                freeloader->alloc_id = g_allocations++;
+                freeloader->size = curr->size - curr->usage;
+                freeloader->usage = real_sz;
+                freeloader->region_start = curr->region_start;
+                freeloader->region_size = curr->region_size;
+                if (g_tail == curr) {
+                    freeloader->next = NULL;
+                    g_tail->next = freeloader;
+                    g_tail = freeloader;
+                } else {
+                    freeloader->next = curr->next;
+                    curr->next = freeloader;
+                }
+                curr->size = curr->usage;
 
-        		LOG("Allocation request USING reuse; size = %zu\n", size);
+                LOG("Allocation request USING reuse; size = %zu, alloc = %ld\n", real_sz, g_allocations - 1);
 
-        		return freeloader;
-        	}
+                return freeloader+1;
+            }
         }
 
         curr = curr->next;
@@ -150,21 +157,23 @@ void *malloc(size_t size)
     // TODO: allocate memory. You'll first check if you can reuse an existing
     // block. If not, map a new memory region.
 
-	/* Re-align the size */
+    LOG("Allocation request; size = %zu\n", size);
+
+    /* Re-align the size */
     if (size % 8 != 0) {
         size = (((int) size / 8) * 8) + 8;
     }
 
     void * ptr = reuse(size);
     if (ptr == NULL) {
-    	LOGP("Reuse returned NULL\n");
+        //LOGP("Reuse returned NULL\n");
     }
     if (ptr != NULL) {
         // noice we could reuse space
         return ptr;
     }
 
-    LOG("Allocation request; size = %zu\n", size);
+    //LOG("Allocation request; size = %zu\n", size);
 
     // go through list and see if there's some free blocks that fits
     // we're trying to allocate
@@ -172,7 +181,7 @@ void *malloc(size_t size)
     /* How much space we are using in the region */
     size_t real_sz = size + sizeof(struct mem_block);
 
-    LOG("Allocation request; real size = %zu\n", real_sz);
+    LOG("Allocation request; real size = %zu, alloc = %ld\n", real_sz, g_allocations);
 
     /* Size per page */
     int page_sz = getpagesize();
@@ -186,7 +195,7 @@ void *malloc(size_t size)
 
     /* Size of entire region */
     size_t region_sz = num_pages * page_sz;
-
+    LOGP("Mapping new region\n");
     /* Set up memory block */
     struct mem_block * block = mmap(
             NULL, /* Address (we use NULL to let the kernel decide) */
@@ -221,6 +230,14 @@ void *malloc(size_t size)
     return block + 1;
 }
 
+void destroy_this(struct mem_block * ptr) {
+    int ret = munmap(ptr->region_start, ptr->region_size);
+    LOGP("Free request; Destroyed a pointer\n");
+    if (ret == -1) {
+        perror("munmap");
+    }
+}
+
 void free(void *ptr)
 {
     if (ptr == NULL) {
@@ -229,8 +246,8 @@ void free(void *ptr)
     }
 
     struct mem_block * blk = (struct mem_block *) ptr - 1;
-    LOG("Free request; allocation = %lu\n", blk->alloc_id);
-
+    LOG("Free request; size = %zu, alloc = %lu\n", blk->usage, blk->alloc_id);
+    
     blk->usage = 0;
 
     // TODO: free memory. If the containing region is empty (i.e., there are no
@@ -246,36 +263,56 @@ void free(void *ptr)
 
     struct mem_block * orig_start = blk->region_start;
     struct mem_block * prev = g_head;
+    struct mem_block * first_half = NULL;
+    struct mem_block * sec_half = NULL;
+    int first_node = 0;
+
+    if (prev->region_start == orig_start) {
+        first_node = 1;
+    }
 
     while (prev->next != NULL) {
-    	struct mem_block * curr = prev->next;
-    	if (curr->region_start == orig_start) {
-    		if (curr->usage != 0) {
-    			return;
-    		}
-    	} else {
-    		break;
-    	}
-    	prev = prev->next;
+        struct mem_block * curr = prev->next;
+        if (curr->region_start == orig_start) {
+            if (first_half == NULL) {
+                first_half = prev;
+                continue;
+            } 
+            if (curr->usage != 0) {
+                LOGP("Free request; Completed - block still in use\n");
+                return;
+            }
+        } else if (first_half != NULL) {
+            sec_half = curr;
+            break;
+        }
+        prev = prev->next;
     }
 
     /* I WILL FINSIH THIS ELIJAH */
-
-    /* Update the linked list */                                                            
-    if (blk == g_head) {                                        
-        g_head = blk->next;                                     
-    } else {                                                    
-        struct mem_block *prev = g_head;                        
-        while (prev->next != blk) {                             
-            prev = prev->next;                                  
-        }                                                       
-        prev->next = blk->next;                                 
-    }   
-
-    int ret = munmap(blk, blk->region_size);
-    if (ret == -1) {
-        perror("munmap");
+    if (first_node) {
+        if (sec_half == NULL) {
+            destroy_this(blk);
+            g_head = NULL;
+            g_tail = NULL;
+        } else {
+            destroy_this(blk);
+            g_head = sec_half;
+        }
+    } else if (first_half != NULL) {
+        if (sec_half == NULL) {
+            destroy_this(blk);
+            g_tail = first_half;
+            g_tail->next = NULL;
+        } else {
+            destroy_this(blk);
+            first_half->next = sec_half;
+        }
+    } else {
+        perror("free");
     }
+
+    LOGP("Free request; Completed\n");
 }
 
 void *calloc(size_t nmemb, size_t size)
@@ -288,7 +325,7 @@ void *calloc(size_t nmemb, size_t size)
 
 void *realloc(void *ptr, size_t size)
 {
-	/* Re-align the size */
+    /* Re-align the size */
     if (size % 8 != 0) {
         size = (((int) size / 8) * 8) + 8;
     }
