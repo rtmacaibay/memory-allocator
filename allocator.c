@@ -80,18 +80,18 @@ pthread_mutex_t g_alloc_mutex = PTHREAD_MUTEX_INITIALIZER;
  */
 void print_memory(void)
 {
-    LOGP("-- Current Memory State --\n");
+    puts("-- Current Memory State --\n");
     struct mem_block *current_block = g_head;
     struct mem_block *current_region = NULL;
     while (current_block != NULL) {
         if (current_block->region_start != current_region) {
             current_region = current_block->region_start;
-            LOG("[REGION] %p-%p %zu\n",
+            printf("[REGION] %p-%p %zu\n",
                     current_region,
                     (void *) current_region + current_region->region_size,
                     current_region->region_size);
         }
-        LOG("[BLOCK]  %p-%p (%ld) %zu %zu %zu\n",
+        printf("[BLOCK]  %p-%p (%ld) %zu %zu %zu\n",
                 current_block,
                 (void *) current_block + current_block->size,
                 current_block->alloc_id,
@@ -128,42 +128,62 @@ void *reuse(size_t size) {
     if (g_head == NULL) {
         return NULL;
     }
-    //print_memory();
-
-    // TODO: using free space management algorithms, find a block of memory that
-    // we can reuse. Return NULL if no suitable block is found.
 
     char * algo = getenv("ALLOCATOR_ALGORITHM");
     if (algo == NULL) {
         algo = "first_fit";
     }
 
+    //LOG("Algo: %s\n", algo);
+
     size_t fits_best = SIZE_MAX;
-    size_t fits_worst = 0;
+    size_t fits_worst = 1;
+
+    struct mem_block * the_spot = NULL;
 
     struct mem_block * curr = g_head;
     size_t real_sz = size + sizeof(struct mem_block);
 
+    LOG("Allocation request USING reuse; size = %zu, alloc = %ld\n", real_sz, g_allocations);
+    
     while (curr != NULL) {
+        size_t free_space = curr->size - curr->usage;
+
         if (strcmp(algo, "first_fit") == 0) {
             // this is done
             if (curr->usage == 0 && real_sz <= curr->size) {
                 curr->usage = real_sz;
+                curr->alloc_id = g_allocations++;
                 LOG("Allocation request USING reuse; reusing alloc %ld\n", curr->alloc_id);
                 return curr + 1;
             }
-            if (curr->usage < curr->size && real_sz <= curr->size - curr->usage) {
-                LOG("Allocation request USING reuse; size = %zu, alloc = %ld\n", real_sz, g_allocations);
-
+            if (curr->usage < curr->size && real_sz <= free_space) {
                 return reuse_space(curr, real_sz);
             }
         } else if (strcmp(algo, "best_fit") == 0) {
-
+            if (curr->usage < curr->size && real_sz <= free_space) {
+                LOG("Possible space: %zu\n", free_space);
+                if (free_space < fits_best) {
+                    //LOG("New space: %zu\n", free_space);
+                    fits_best = free_space;
+                    the_spot = curr;
+                }
+            }
         } else if (strcmp(algo, "worst_fit") == 0) {
-
+            if (curr->usage < curr->size && real_sz <= free_space) {
+                if (free_space > fits_worst) {
+                    fits_worst = free_space;
+                    the_spot = curr;
+                }
+            }
         }
-
         curr = curr->next;
+    }
+
+    if (the_spot != NULL) {
+        size_t free_space = the_spot->size - the_spot->usage;
+        LOG("Sure: Using this spot: %zu\n", free_space);
+        return reuse_space(the_spot, real_sz);
     }
 
     return NULL;
@@ -171,10 +191,7 @@ void *reuse(size_t size) {
 
 void *malloc(size_t size)
 {
-    // TODO: allocate memory. You'll first check if you can reuse an existing
-    // block. If not, map a new memory region.
-
-    LOG("Allocation request; size = %zu\n", size);
+    //LOG("Allocation request; size = %zu\n", size);
 
     /* Re-align the size */
     if (size % 8 != 0) {
@@ -190,15 +207,12 @@ void *malloc(size_t size)
         return ptr;
     }
 
-    //LOG("Allocation request; size = %zu\n", size);
-
-    // go through list and see if there's some free blocks that fits
-    // we're trying to allocate
+    LOG("Allocation request; size = %zu\n", size);
 
     /* How much space we are using in the region */
     size_t real_sz = size + sizeof(struct mem_block);
 
-    LOG("Allocation request; real size = %zu, alloc = %ld\n", real_sz, g_allocations);
+    //LOG("Allocation request; real size = %zu, alloc = %ld\n", real_sz, g_allocations);
 
     /* Size per page */
     int page_sz = getpagesize();
@@ -212,7 +226,7 @@ void *malloc(size_t size)
 
     /* Size of entire region */
     size_t region_sz = num_pages * page_sz;
-    LOGP("Mapping new region\n");
+    //LOGP("Mapping new region\n");
     /* Set up memory block */
     struct mem_block * block = mmap(
             NULL, /* Address (we use NULL to let the kernel decide) */
@@ -249,7 +263,7 @@ void *malloc(size_t size)
 
 void destroy_this(struct mem_block * ptr) {
     int ret = munmap(ptr->region_start, ptr->region_size);
-    LOGP("Free request; Destroyed a pointer\n");
+    //LOGP("Free request; Destroyed a pointer\n");
     if (ret == -1) {
         perror("munmap");
     }
@@ -263,7 +277,7 @@ void free(void *ptr)
     }
 
     struct mem_block * blk = (struct mem_block *) ptr - 1;
-    LOG("Free request; size = %zu, alloc = %lu\n", blk->usage, blk->alloc_id);
+    //LOG("Free request; size = %zu, alloc = %lu\n", blk->usage, blk->alloc_id);
     
     blk->usage = 0;
 
@@ -285,7 +299,7 @@ void free(void *ptr)
                 continue;
             } 
             if (curr->usage != 0) {
-                LOGP("Free request; Completed - block still in use\n");
+                //LOGP("Free request; Completed - block still in use\n");
                 return;
             }
         } else if (first_half != NULL) {
@@ -318,7 +332,7 @@ void free(void *ptr)
         perror("free");
     }
 
-    LOGP("Free request; Completed\n");
+    //LOGP("Free request; Completed\n");
 }
 
 void *calloc(size_t nmemb, size_t size)
@@ -350,7 +364,17 @@ void *realloc(void *ptr, size_t size)
     }
 
     // TODO: reallocation logic
+    struct mem_block * blk = (struct mem_block *) ptr - 1;
+
+    if (blk->size >= size) {
+        blk->usage = size;
+        return ptr;
+    } else {
+        void * new = malloc(size);
+        memcpy(new, ptr, blk->usage);
+        free(ptr);
+        return new;
+    }
 
     return NULL;
 }
-
