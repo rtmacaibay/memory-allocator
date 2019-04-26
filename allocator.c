@@ -104,6 +104,13 @@ void print_memory(void)
 }
 
 void *reuse_space(struct mem_block * ptr, size_t real_sz) {
+    if (ptr->usage == 0) {
+        ptr->usage = real_sz;
+        unsigned long old_id = ptr->alloc_id;
+        ptr->alloc_id = g_allocations++;
+        LOG("Allocation request USING reuse; reusing alloc %ld\n", old_id);
+        return ptr + 1;
+    }
     struct mem_block * freeloader = (void*)ptr + ptr->usage;
     freeloader->alloc_id = g_allocations++;
     freeloader->size = ptr->size - ptr->usage;
@@ -150,13 +157,6 @@ void *reuse(size_t size) {
         size_t free_space = curr->size - curr->usage;
 
         if (strcmp(algo, "first_fit") == 0) {
-            // this is done
-            if (curr->usage == 0 && real_sz <= curr->size) {
-                curr->usage = real_sz;
-                curr->alloc_id = g_allocations++;
-                LOG("Allocation request USING reuse; reusing alloc %ld\n", curr->alloc_id);
-                return curr + 1;
-            }
             if (curr->usage < curr->size && real_sz <= free_space) {
                 return reuse_space(curr, real_sz);
             }
@@ -182,7 +182,7 @@ void *reuse(size_t size) {
 
     if (the_spot != NULL) {
         size_t free_space = the_spot->size - the_spot->usage;
-        LOG("Sure: Using this spot: %zu\n", free_space);
+        LOG("Using this spot: %zu\n", free_space);
         return reuse_space(the_spot, real_sz);
     }
 
@@ -277,7 +277,7 @@ void free(void *ptr)
     }
 
     struct mem_block * blk = (struct mem_block *) ptr - 1;
-    //LOG("Free request; size = %zu, alloc = %lu\n", blk->usage, blk->alloc_id);
+    LOG("Free request; size = %zu, alloc = %lu\n", blk->usage, blk->alloc_id);
     
     blk->usage = 0;
 
@@ -332,7 +332,7 @@ void free(void *ptr)
         perror("free");
     }
 
-    //LOGP("Free request; Completed\n");
+    LOGP("Free request; Completed\n");
 }
 
 void *calloc(size_t nmemb, size_t size)
@@ -340,7 +340,14 @@ void *calloc(size_t nmemb, size_t size)
     // TODO: hmm, what does calloc do?
     // malloc
     // memset(ptr, 0, nmemb * size);
-    return NULL;
+
+    if (nmemb == 0 || size == 0) {
+        return NULL;
+    }
+
+    void * ptr = malloc(nmemb * size);
+    memset(ptr, 0, nmemb * size);
+    return ptr;
 }
 
 void *realloc(void *ptr, size_t size)
