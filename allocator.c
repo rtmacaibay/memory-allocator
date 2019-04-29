@@ -3,7 +3,7 @@
  *
  * Explores memory management at the C runtime level.
  *
- * Author: <your team members go here>
+ * Author: Robert Macaibay and Elijah Delos Reyes
  *
  * To use (one specific command):
  * LD_PRELOAD=$(pwd)/allocator.so command
@@ -71,15 +71,12 @@ pthread_mutex_t g_alloc_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 /**
  * print_memory
- * 
- * TODO: make this not allocate memory //fprintf ??
  *
  * Prints out the current memory state, including both the regions and blocks.
  * Entries are printed in order, so there is an implied link from the topmost
  * entry to the next, and so on.
  */
-void print_memory(void)
-{
+void print_memory(void) {
     puts("-- Current Memory State --\n");
     struct mem_block *current_block = g_head;
     struct mem_block *current_region = NULL;
@@ -103,6 +100,18 @@ void print_memory(void)
     }
 }
 
+/**
+ * reuse_space
+ * 
+ * Helper function that allows us to reuse space mem_block ptr
+ * with size real_sz
+ *
+ * Parameters:
+ * - ptr: memory block to reuse
+ * - real_sz: usage space to set to
+ *
+ * Returns: new memory block pointer
+ */
 void *reuse_space(struct mem_block * ptr, size_t real_sz) {
     if (ptr->usage == 0) {
         ptr->usage = real_sz;
@@ -131,6 +140,16 @@ void *reuse_space(struct mem_block * ptr, size_t real_sz) {
     return freeloader + 1;
 }
 
+/**
+ * reuse
+ * 
+ * Allows us to reuse empty regions with size
+ *
+ * Parameters:
+ * - size: size to set block to
+ *
+ * Returns: memory block pointer with size
+ */
 void *reuse(size_t size) {
     if (g_head == NULL) {
         return NULL;
@@ -189,8 +208,17 @@ void *reuse(size_t size) {
     return NULL;
 }
 
-void *malloc(size_t size)
-{
+/**
+ * malloc
+ * 
+ * Our own implementation of malloc that allocates memory
+ *
+ * Parameters:
+ * - size: bytes to allocate
+ *
+ * Returns memory block pointer with allocated memory.
+ */
+void *malloc(size_t size) {
     //LOG("Allocation request; size = %zu\n", size);
 
     /* Re-align the size */
@@ -261,6 +289,16 @@ void *malloc(size_t size)
     return block + 1;
 }
 
+/**
+ * destroy_this
+ * 
+ * Helper function to destroy memory block pointer
+ *
+ * Parameters: 
+ * - ptr: memory block pointer to destroy
+ *
+ * Returns void
+ */
 void destroy_this(struct mem_block * ptr) {
     int ret = munmap(ptr->region_start, ptr->region_size);
     //LOGP("Free request; Destroyed a pointer\n");
@@ -269,8 +307,18 @@ void destroy_this(struct mem_block * ptr) {
     }
 }
 
-void free(void *ptr)
-{
+/**
+ * free
+ * 
+ * Our own implementation of free that deallocated the memory allocation
+ * pointed to by ptr
+ *
+ * Parameters: 
+ * - ptr: memory to deallocate
+ *
+ * Returns: void
+ */
+void free(void *ptr) {
     if (ptr == NULL) {
         /* Freeing a NULL pointer does nothing */
         return;
@@ -335,6 +383,18 @@ void free(void *ptr)
     LOGP("Free request; Completed\n");
 }
 
+/**
+ * calloc
+ *
+ * Our own implementation of calloc that allocated enough space
+ * for nmeb objects that are size bytes of memory each
+ *
+ * Parameters
+ * - nmeb: object to allocate memory
+ * - size: bytes to allocate
+ *
+ * Returns memory block pointer with allocated memory.
+ */
 void *calloc(size_t nmemb, size_t size)
 {
     // TODO: hmm, what does calloc do?
@@ -350,8 +410,19 @@ void *calloc(size_t nmemb, size_t size)
     return ptr;
 }
 
-void *realloc(void *ptr, size_t size)
-{
+/** 
+ * realloc
+ *
+ * Our own implementation of realloc that tries to change the size of the 
+ * allocation point to by ptr to size
+ *
+ * Parameters:
+ * - ptr: allocation to change 
+ * - size: bytes to allocate
+ * 
+ * Returns memory block pointer with allocated memory
+ */
+void *realloc(void *ptr, size_t size) {
     /* Re-align the size */
     if (size % 8 != 0) {
         size = (((int) size / 8) * 8) + 8;
