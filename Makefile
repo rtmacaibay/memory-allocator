@@ -1,18 +1,13 @@
-lib=allocator
+lib=allocator.so
 
 # Set the following to '0' to disable log messages:
-debug=1
+DEBUG ?= 1
 
 CFLAGS += -Wall -g -pthread -fPIC -shared
 LDFLAGS +=
 
-src=allocator.c
-obj=$(src:.c=.o)
-
-$(lib).so: $(obj)
-	$(CC) $(CFLAGS) $(LDFLAGS) -DDEBUG=$(debug) $(obj) -o $@
-
-allocator.o: allocator.c
+$(lib): allocator.c
+	$(CC) $(CFLAGS) $(LDFLAGS) -DDEBUG=$(DEBUG) allocator.c -o $@
 
 clean:
 	rm -f $(lib) $(obj)
@@ -20,7 +15,8 @@ clean:
 
 # Tests --
 
-test: $(bin) ./tests/run_tests
+test: DEBUG=0
+test: clean $(lib) ./tests/run_tests
 	./tests/run_tests $(run)
 
 testupdate: testclean test
