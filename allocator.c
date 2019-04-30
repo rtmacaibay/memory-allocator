@@ -77,7 +77,7 @@ pthread_mutex_t g_alloc_mutex = PTHREAD_MUTEX_INITIALIZER;
  * entry to the next, and so on.
  */
 void print_memory(void) {
-    puts("-- Current Memory State --\n");
+    puts("-- Current Memory State --");
     struct mem_block *current_block = g_head;
     struct mem_block *current_region = NULL;
     while (current_block != NULL) {
@@ -98,6 +98,34 @@ void print_memory(void) {
                     ? 0 : current_block->usage - sizeof(struct mem_block));
         current_block = current_block->next;
     }
+}
+
+void write_memory(FILE * fp) {
+    fputs("-- Current Memory State --", fp);
+    struct mem_block *current_block = g_head;
+    struct mem_block *current_region = NULL;
+    while (current_block != NULL) {
+        if (current_block->region_start != current_region) {
+            current_region = current_block->region_start;
+            fprintf(fp, "[REGION] %p-%p %zu\n",
+                    current_region,
+                    (void *) current_region + current_region->region_size,
+                    current_region->region_size);
+        }
+        fprintf(fp, "[BLOCK]  %p-%p (%ld) %zu %zu %zu\n",
+                current_block,
+                (void *) current_block + current_block->size,
+                current_block->alloc_id,
+                current_block->size,
+                current_block->usage,
+                current_block->usage == 0
+                    ? 0 : current_block->usage - sizeof(struct mem_block));
+        current_block = current_block->next;
+    }
+}
+
+void scribble_this(void * ptr, size_t sz) {
+    memset(ptr, 0xAA, sz);
 }
 
 /**
@@ -126,6 +154,7 @@ void *reuse_space(struct mem_block * ptr, size_t real_sz) {
     freeloader->usage = real_sz;
     freeloader->region_start = ptr->region_start;
     freeloader->region_size = ptr->region_size;
+    pthread_mutex_lock(&g_alloc_mutex);
     if (g_tail == ptr) {
         freeloader->next = NULL;
         g_tail->next = freeloader;
@@ -134,6 +163,7 @@ void *reuse_space(struct mem_block * ptr, size_t real_sz) {
         freeloader->next = ptr->next;
         ptr->next = freeloader;
     }
+    pthread_mutex_unlock(&g_alloc_mutex);
 
     ptr->size = ptr->usage;
 
@@ -172,11 +202,13 @@ void *reuse(size_t size) {
 
     LOG("Allocation request USING reuse; size = %zu, alloc = %ld\n", real_sz, g_allocations);
     
+    pthread_mutex_lock(&g_alloc_mutex);
     while (curr != NULL) {
         size_t free_space = curr->size - curr->usage;
 
         if (strcmp(algo, "first_fit") == 0) {
             if (curr->usage < curr->size && real_sz <= free_space) {
+                pthread_mutex_unlock(&g_alloc_mutex);
                 return reuse_space(curr, real_sz);
             }
         } else if (strcmp(algo, "best_fit") == 0) {
@@ -198,6 +230,7 @@ void *reuse(size_t size) {
         }
         curr = curr->next;
     }
+    pthread_mutex_unlock(&g_alloc_mutex);
 
     if (the_spot != NULL) {
         size_t free_space = the_spot->size - the_spot->usage;
@@ -220,6 +253,12 @@ void *reuse(size_t size) {
  */
 void *malloc(size_t size) {
     //LOG("Allocation request; size = %zu\n", size);
+    char * s = getenv("ALLOCATOR_SCRIBBLE");
+    int scribble = 0;
+
+    if (s != NULL) {
+        scribble = atoi(s);
+    }
 
     /* Re-align the size */
     if (size % 8 != 0) {
@@ -231,7 +270,10 @@ void *malloc(size_t size) {
         //LOGP("Reuse returned NULL\n");
     }
     if (ptr != NULL) {
-        // noice we could reuse space
+        // noice we could reuse space 
+        if (scribble) {
+            scribble_this(ptr, size);
+        }
         return ptr;
     }
 
@@ -269,6 +311,7 @@ void *malloc(size_t size) {
         return NULL;
     }
 
+    pthread_mutex_lock(&g_alloc_mutex);
     block->alloc_id = g_allocations++;
     block->size = region_sz;
     block->usage = real_sz;
@@ -284,6 +327,11 @@ void *malloc(size_t size) {
         g_tail->next = block;
         g_tail = g_tail->next;
         g_tail->next = NULL;
+    }
+    pthread_mutex_unlock(&g_alloc_mutex);
+
+    if (scribble) {
+        scribble_this(block + 1, size);
     }
 
     return block + 1;
@@ -319,10 +367,13 @@ void destroy_this(struct mem_block * ptr) {
  * Returns: void
  */
 void free(void *ptr) {
+
     if (ptr == NULL) {
         /* Freeing a NULL pointer does nothing */
         return;
     }
+
+    pthread_mutex_lock(&g_alloc_mutex);
 
     struct mem_block * blk = (struct mem_block *) ptr - 1;
     LOG("Free request; size = %zu, alloc = %lu\n", blk->usage, blk->alloc_id);
@@ -335,19 +386,31 @@ void free(void *ptr) {
     struct mem_block * sec_half = NULL;
     int first_node = 0;
 
+    //if first node is our block
     if (prev->region_start == orig_start) {
         first_node = 1;
+        if (prev->usage != 0) {
+            pthread_mutex_unlock(&g_alloc_mutex);    
+            return;
+        }
     }
 
+    //iterate thru linked list
     while (prev->next != NULL) {
+        //get next block
         struct mem_block * curr = prev->next;
+        //check if same region as block
         if (curr->region_start == orig_start) {
+            //yo if we dont have a first half
             if (first_half == NULL) {
+                //save previous link
                 first_half = prev;
                 continue;
             } 
+
             if (curr->usage != 0) {
                 //LOGP("Free request; Completed - block still in use\n");
+                pthread_mutex_unlock(&g_alloc_mutex);
                 return;
             }
         } else if (first_half != NULL) {
@@ -380,6 +443,8 @@ void free(void *ptr) {
         perror("free");
     }
 
+    pthread_mutex_unlock(&g_alloc_mutex);
+
     LOGP("Free request; Completed\n");
 }
 
@@ -397,10 +462,6 @@ void free(void *ptr) {
  */
 void *calloc(size_t nmemb, size_t size)
 {
-    // TODO: hmm, what does calloc do?
-    // malloc
-    // memset(ptr, 0, nmemb * size);
-
     if (nmemb == 0 || size == 0) {
         return NULL;
     }
