@@ -54,7 +54,7 @@ make test run='4 8 12'
 
 ## Visualization
 
-Memory State when we run Robert's Project 2:
+Memory State when we run Robert's Project 2 (the first prompt):
 
 ```bash
 -- Current Memory State --
@@ -97,7 +97,7 @@ Memory State when we run Robert's Project 2:
 [BLOCK]  0x7f89b92aa030-0x7f89b92ab000 (34) 4048 1072 1024
 ```
 
-Memory State when we run cat on a random text file
+Memory State when we run cat on a random text file:
 ```
 -- Current Memory State --
 [REGION] 0x7f2016dda000-0x7f2016ddb000 4096
