@@ -451,7 +451,8 @@ void free(void *ptr) {
         first_node = 1;
         //wouldn't it be crazy if the first node had something
         if (prev->usage != 0) {
-            pthread_mutex_unlock(&g_alloc_mutex);    
+            pthread_mutex_unlock(&g_alloc_mutex);   
+            //print_memory(); 
             return;
         }
     }
@@ -473,6 +474,7 @@ void free(void *ptr) {
                 //log msg with explanatory msg
                 LOGP("Free request; Completed - block still in use\n");
                 pthread_mutex_unlock(&g_alloc_mutex);
+                //print_memory();
                 return;
             }
         } else if (first_half != NULL) {
@@ -517,6 +519,8 @@ void free(void *ptr) {
 
     //pls let me know if we survived free
     LOGP("Free request; Completed\n");
+
+    //print_memory();
 }
 
 /**
